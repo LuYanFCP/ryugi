@@ -190,7 +190,9 @@ npx ryugi-artifacts
 
 Local first, no subscription, no agent session needed. One server covers every project on the
 machine, with ⌘K to jump and links that survive a restart. `publish` shares one to
-[Ryugi Cloud](https://ryugi.innei.dev).
+[Ryugi Cloud](https://ryugi.innei.dev). To share a read-only snapshot on your own domain,
+start this fork's receiver with Docker Compose and push an artifact with `self-host/push.py`.
+See the [self-hosting guide](self-host/README.md).
 
 For a persistent `ryugi` command without a harness plugin:
 

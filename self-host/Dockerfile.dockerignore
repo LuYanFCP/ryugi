@@ -1,0 +1,7 @@
+**
+!LICENSE
+!self-host/
+self-host/**
+!self-host/Dockerfile
+!self-host/server.py
+!self-host/snapshot.py

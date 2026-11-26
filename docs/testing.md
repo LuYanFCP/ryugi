@@ -10,6 +10,7 @@ Ryugi has two distinct kinds of tests, each in its own directory:
 Live in `tests/`. Currently:
 
 - The `ryugi-artifacts` suite (server, CLI, viewer and the hook and launcher parity tests against this repository's `hooks/` and `skills/artifacts/app/`) lives with the package, outside this repository.
+- `python3 -m unittest discover -s tests/self-host -v` exercises this fork's snapshot publisher and receiver over loopback HTTP with a temporary database and artifact directory.
 - `tests/version-bump/` — `bump-version.sh` behavior and that every declared version file stays in sync.
 - `tests/interface-craft/` — static contracts for the interface-craft skill (`test-structure.mjs`: frontmatter, modes, audit list, tokens, ordered passes, checklist, integration lines) and `measure-boards.mjs`, which renders fixture HTML in headless Chrome and prints overlap, clipping, 4px-grid, tabular-figure and invented-claim counts. Evaluation is run by the agent in an isolated temp directory with no artifacts server or publishing; the procedure and cases are in `eval-rubric.md`.
 - `tests/opencode/` — bash tests for OpenCode plugin loading, bootstrap caching, and tool registration.

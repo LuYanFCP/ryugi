@@ -38,6 +38,8 @@ The same CLI runs what the skill uses: `npx ryugi-artifacts start`, `stop` and `
 
 Cloud publish failures print their classified cause and any login or upgrade link in Brief. Machine JSON retains the HTTP status in `error.httpStatus` and quota facts in `error.details`. Account quota failures use `E_PLAN_LIMIT` and exit code 2; artifact storage exhaustion uses `E_ARTIFACT_STORAGE_LIMIT`, HTTP 413 and exit code 1. Auto-publish reports the same exhaustion reason immediately.
 
+To publish a read-only snapshot to your own server, use this fork's `python3 self-host/push.py --server URL --project-dir PROJECT --artifact TYPE/SLUG` with its own publishing token. The [self-hosting guide](../self-host/README.md) covers Docker Compose, HTTPS and updating a share.
+
 ## License
 
 Ryugi's skills, harness integrations and docs are under Ryugi License 1.1, which limits the Restricted Parties in Schedule A to internal use, with no marketplace listing, product bundling or model training for others, and prohibits scraping them into a marketplace. `ryugi-artifacts` is proprietary (npm `license`: `UNLICENSED`) and not part of this repository; releases up to 1.51.2 were published under AGPL-3.0-only.

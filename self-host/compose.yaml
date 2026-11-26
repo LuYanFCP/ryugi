@@ -1,0 +1,15 @@
+services:
+  shares:
+    build:
+      context: ..
+      dockerfile: self-host/Dockerfile
+    environment:
+      RYUGI_SELF_HOST_TOKEN: ${RYUGI_SELF_HOST_TOKEN:?Set the publishing token before starting Compose}
+    ports:
+      - "127.0.0.1:${RYUGI_SELF_HOST_PORT:-8787}:8787"
+    volumes:
+      - snapshots:/data
+    restart: unless-stopped
+
+volumes:
+  snapshots:
