@@ -72,13 +72,17 @@ map $args $ryugi_home {
     ""               127.0.0.1:8788;
     ~^key=[^&]*$     127.0.0.1:8788;
 }
-map "$scheme:$http_x_ryugi_native_document" $ryugi_document {
-    default          127.0.0.1:27319;
-    "http:"          127.0.0.1:8788;
+map "$arg_key:$uri" $ryugi_document {
+    default                  127.0.0.1:27319;
+    "~^[^:]+:/document/"     127.0.0.1:8788;
 }
 map "$scheme:$arg_hub_native" $ryugi_entry {
     default          127.0.0.1:27319;
     "http:"          127.0.0.1:8788;
+}
+map "$upstream_status:$upstream_http_content_type:$uri" $ryugi_asset_cache {
+    default "no-store";
+    "~^200:(text/(javascript|css)|application/(javascript|wasm))[^:]*:/[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8}\.(js|css|wasm)$" "private, max-age=31536000, immutable";
 }
 ```
 
@@ -90,8 +94,24 @@ location = / {
     proxy_pass http://$ryugi_home;
 }
 location = /index.js {
+    gzip on;
+    gzip_types text/javascript application/javascript;
+    gzip_vary on;
+    gzip_proxied any;
     proxy_set_header Host $http_host;
     proxy_pass http://$ryugi_entry;
+}
+location ~ "^/[A-Za-z0-9_.-]+\.(js|css|wasm)$" {
+    gzip on;
+    gzip_types text/javascript application/javascript text/css application/wasm;
+    gzip_comp_level 5;
+    gzip_vary on;
+    gzip_proxied any;
+    proxy_set_header Host $http_host;
+    proxy_hide_header Cache-Control;
+    add_header Cache-Control $ryugi_asset_cache always;
+    add_header Vary Cookie always;
+    proxy_pass http://127.0.0.1:27319;
 }
 location ^~ /_share/ {
     client_max_body_size 2k;
@@ -102,7 +122,7 @@ location ~ "^/(embed/)?document/[A-Za-z0-9_-]+/?$" {
     proxy_set_header Host $http_host;
     proxy_intercept_errors on;
     error_page 403 = @ryugi_document_login;
-    add_header Vary "Cookie, X-Ryugi-Native-Document" always;
+    add_header Vary Cookie always;
     proxy_pass http://$ryugi_document;
 }
 location @ryugi_document_login {
@@ -111,7 +131,9 @@ location @ryugi_document_login {
 }
 ```
 
-HTTPS 上的文档由原生 Hub 直接打开。在内网 HTTP 域名上，浏览器可能缺少查看器使用的 `crypto.randomUUID()`。网关会在原版资源库、文档页面和内嵌查看器的公共 JS 入口先加载 HTTP 兼容脚本。它用浏览器的 `crypto.getRandomValues()` 提供 UUID v4，再从本机安装的 Hub 加载其文档查看器和样式。文档内容、段落定位和 WebSocket 均由原 Hub 处理。
+浏览器首次打开时，网关会压缩查看器的 JS、CSS 和 WebAssembly。浏览器可以复用文件名带有内容哈希的资源；升级后文件名会随内容变化。文档和 API 仍按原来的访问与缓存规则处理。
+
+已登录的文档和内嵌页面直接使用原 Hub 输出的 HTML，使浏览器能提前并行加载依赖。在内网 HTTP 域名上，浏览器可能缺少查看器使用的 `crypto.randomUUID()`。网关会在原版资源库、文档页面和内嵌查看器的公共 JS 入口先加载 HTTP 兼容脚本。它用浏览器的 `crypto.getRandomValues()` 提供 UUID v4，再从本机安装的 Hub 加载其文档查看器和样式。文档内容、段落定位和 WebSocket 均由原 Hub 处理。
 
 ## 从命令行推送
 
