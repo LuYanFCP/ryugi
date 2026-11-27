@@ -10,7 +10,8 @@ import stat
 from http.cookies import CookieError, SimpleCookie
 from pathlib import Path
 from socketserver import ThreadingMixIn
-from wsgiref.simple_server import WSGIServer, make_server
+from urllib.parse import parse_qs
+from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 from push import artifact_root, destination_url, publish, publishing_token
 from snapshot import ARTIFACT_TYPES, LOCATOR
@@ -20,6 +21,16 @@ PORT = 8788
 ASSETS = Path(__file__).resolve().parent
 HUB_ID = re.compile(rb"[a-zA-Z0-9_-]{8,64}")
 GATEWAY_PATH = "/_share/"
+DOCUMENT_ROUTE = re.compile(r"/(?P<embed>embed/)?document/[A-Za-z0-9_-]+/?")
+GATEWAY_CSP = (
+    "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; "
+    "frame-ancestors 'none'; form-action 'none'; base-uri 'none'"
+)
+VIEWER_CSP = (
+    "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-src 'self'; "
+    "base-uri 'self'; form-action 'none'; frame-ancestors "
+)
 
 
 class Gateway:
@@ -107,9 +118,11 @@ def create_hub(project_dirs, server, namespace=None, *, gateway=None):
     }
     if gateway:
         landing = (ASSETS / "gateway.html").read_bytes()
+        document_viewer = (ASSETS / "document-viewer.html").read_bytes()
         gateway_assets = {
             "/gateway.js": ("text/javascript", (ASSETS / "gateway.js").read_bytes()),
             "/gateway.css": ("text/css", (ASSETS / "gateway.css").read_bytes()),
+            "/document-viewer.js": ("text/javascript", (ASSETS / "document-viewer.js").read_bytes()),
         }
         reader_base = (
             destination_url(
@@ -120,7 +133,7 @@ def create_hub(project_dirs, server, namespace=None, *, gateway=None):
         )
 
     def app(env, start_response):
-        def respond(status, data, content_type="application/json"):
+        def respond(status, data, content_type="application/json", *, csp=GATEWAY_CSP, frame="DENY"):
             body = data if isinstance(data, bytes) else json.dumps(data).encode()
             start_response(
                 status,
@@ -130,13 +143,8 @@ def create_hub(project_dirs, server, namespace=None, *, gateway=None):
                     ("Cache-Control", "no-store"),
                     ("Referrer-Policy", "no-referrer"),
                     ("X-Content-Type-Options", "nosniff"),
-                    ("X-Frame-Options", "DENY"),
-                    (
-                        "Content-Security-Policy",
-                        "default-src 'none'; style-src 'self'; "
-                        "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; "
-                        "form-action 'none'; base-uri 'none'",
-                    ),
+                    ("X-Frame-Options", frame),
+                    ("Content-Security-Policy", csp),
                 ],
             )
             return [] if env["REQUEST_METHOD"] == "HEAD" else [body]
@@ -155,6 +163,22 @@ def create_hub(project_dirs, server, namespace=None, *, gateway=None):
         if via_gateway:
             if path == "/" and method in {"GET", "HEAD"}:
                 return respond("200 OK", landing, "text/html")
+            document = DOCUMENT_ROUTE.fullmatch(path)
+            if document and method in {"GET", "HEAD"}:
+                embedded = bool(document["embed"])
+                authorized = gateway.authorized(env.get("HTTP_COOKIE", ""))
+                query = parse_qs(env.get("QUERY_STRING", ""), keep_blank_values=True)
+                if not embedded and (not authorized or "key" in query):
+                    return respond("200 OK", landing, "text/html")
+                if not authorized:
+                    return respond("403 Forbidden", {"error": "请先登录 Hub。"})
+                return respond(
+                    "200 OK",
+                    document_viewer,
+                    "text/html",
+                    csp=VIEWER_CSP + ("'self'" if embedded else "'none'"),
+                    frame="SAMEORIGIN" if embedded else "DENY",
+                )
             if not path.startswith(GATEWAY_PATH):
                 return respond("404 Not Found", {"error": "页面不存在。"})
             path = "/" + path.removeprefix(GATEWAY_PATH)
@@ -232,6 +256,12 @@ class LocalServer(ThreadingMixIn, WSGIServer):
     daemon_threads = True
 
 
+class HubRequestHandler(WSGIRequestHandler):
+    def log_request(self, code="-", size="-"):
+        # Hub sign-in links may carry the access key in their query string.
+        self.log_message('"%s %s" %s %s', self.command, self.path.partition("?")[0], code, size)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -260,7 +290,9 @@ if __name__ == "__main__":
         app, key = create_hub(
             args.project_dir or [Path.cwd()], args.server, args.namespace, gateway=gateway
         )
-        with make_server(HOST, PORT, app, server_class=LocalServer) as http:
+        with make_server(
+            HOST, PORT, app, server_class=LocalServer, handler_class=HubRequestHandler
+        ) as http:
             print(
                 f"在本机浏览器打开此链接以启用分享：http://{HOST}:{PORT}/#session={key}", flush=True
             )

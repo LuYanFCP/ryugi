@@ -11,7 +11,7 @@ Live in `tests/`. Currently:
 
 - The `ryugi-artifacts` suite (server, CLI, viewer and the hook and launcher parity tests against this repository's `hooks/` and `skills/artifacts/app/`) lives with the package, outside this repository.
 - `python3 -m unittest discover -s tests/self-host -v` exercises this fork's browser sharing API, publisher and receiver using temporary projects and a loopback server. It covers Hub ID lookup, local pairing, the gateway's native Hub cookie, same-origin publication and readable links.
-- `node --test tests/self-host/test_extension.cjs` checks the Hub button and toolbar routes, including custom ports, IPv6 and exclusion of local Hub keys from share requests.
+- `node --test tests/self-host/*.cjs` checks the Hub button and toolbar routes, local key handling, and the HTTP document viewer's UUID generation, project lookup and same-origin assets.
 - `tests/version-bump/` — `bump-version.sh` behavior and that every declared version file stays in sync.
 - `tests/interface-craft/` — static contracts for the interface-craft skill (`test-structure.mjs`: frontmatter, modes, audit list, tokens, ordered passes, checklist, integration lines) and `measure-boards.mjs`, which renders fixture HTML in headless Chrome and prints overlap, clipping, 4px-grid, tabular-figure and invented-claim counts. Evaluation is run by the agent in an isolated temp directory with no artifacts server or publishing; the procedure and cases are in `eval-rubric.md`.
 - `tests/opencode/` — bash tests for OpenCode plugin loading, bootstrap caching, and tool registration.

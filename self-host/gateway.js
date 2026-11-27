@@ -5,6 +5,7 @@ const login = get("login");
 const library = get("library");
 const status = get("status");
 const search = get("filter");
+const documentLink = location.pathname.startsWith("/document/");
 let inventory;
 
 function showLogin(message = "") {
@@ -66,6 +67,10 @@ async function signIn(value) {
   const result = await fetch(native, { cache: "no-store", redirect: "error", referrerPolicy: "no-referrer" });
   if (result.body) await result.body.cancel();
   if (!result.ok) throw new Error("密钥无效，请检查原来的 Hub 访问链接。");
+  if (documentLink) {
+    location.reload();
+    return;
+  }
   await load();
 }
 
@@ -87,4 +92,6 @@ if (entry.searchParams.has("key")) {
   entry.searchParams.delete("key");
   history.replaceState(null, "", entry.pathname + entry.search + entry.hash);
 }
-(entryKey ? signIn(entryKey) : load()).catch((error) => showLogin(error.message));
+if (entryKey) signIn(entryKey).catch((error) => showLogin(error.message));
+else if (documentLink) showLogin("登录后会回到文档中的原位置。");
+else load().catch((error) => showLogin(error.message));

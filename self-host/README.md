@@ -50,7 +50,7 @@ export RYUGI_SELF_HOST_URL=https://artifacts.example.com
 
 ## 在已有 Hub 域名上分享
 
-网关首页可以用原 Hub 密钥登录，列出项目里的产物。点击产物名会打开原生 viewer，点击右侧的 **分享** 可以生成只读链接。首页的 **打开原版资源库** 会进入原 Hub。已有文档深链和读者的 `/a/…/` 链接沿用原地址。
+网关首页可以用原 Hub 密钥登录，列出项目里的产物。点击产物名会打开原生 viewer，点击右侧的 **分享** 可以生成只读链接。首页的 **打开原版资源库** 会进入原 Hub。直接打开 `/document/…#小节` 时可以在原页面登录，登录后会回到对应小节。读者使用生成的 `/a/…/` 链接即可打开快照。
 
 在 Hub 所在机器上配置好接收端地址和发布令牌，启动分享进程。例如，若原生 Hub 监听 27319 端口、对外地址为 `https://hub.example.com`，且同一网关提供快照，可以这样配置。
 
@@ -72,9 +72,13 @@ map $args $ryugi_home {
     ""               127.0.0.1:8788;
     ~^key=[^&]*$     127.0.0.1:8788;
 }
+map "$scheme:$http_x_ryugi_native_document" $ryugi_document {
+    default          127.0.0.1:27319;
+    "http:"          127.0.0.1:8788;
+}
 ```
 
-在原 Hub 的 `server` 配置中添加以下两条路由。原有的 viewer、WebSocket 和快照路由继续处理各自的路径。首页通过 `/?view=library` 向原生 Hub 验证密钥并取得其 HttpOnly cookie。
+在原 Hub 的 `server` 配置中添加以下路由。登录页通过 `/?view=library` 向原生 Hub 验证密钥并取得其 HttpOnly cookie。
 
 ```nginx
 location = / {
@@ -86,7 +90,20 @@ location ^~ /_share/ {
     proxy_set_header Host $http_host;
     proxy_pass http://127.0.0.1:8788;
 }
+location ~ "^/(embed/)?document/[A-Za-z0-9_-]+/?$" {
+    proxy_set_header Host $http_host;
+    proxy_intercept_errors on;
+    error_page 403 = @ryugi_document_login;
+    add_header Vary "Cookie, X-Ryugi-Native-Document" always;
+    proxy_pass http://$ryugi_document;
+}
+location @ryugi_document_login {
+    proxy_set_header Host $http_host;
+    proxy_pass http://127.0.0.1:8788;
+}
 ```
+
+HTTPS 上的文档由原生 Hub 直接打开。在内网 HTTP 域名上，浏览器可能缺少查看器使用的 `crypto.randomUUID()`。分享进程会在已登录的文档页面中用浏览器的 `crypto.getRandomValues()` 提供 UUID v4，再从本机安装的 Hub 加载其文档查看器和样式。文档内容、段落定位和 WebSocket 均由原 Hub 处理。
 
 ## 从命令行推送
 

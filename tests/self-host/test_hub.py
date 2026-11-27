@@ -73,6 +73,7 @@ class HubTest(unittest.TestCase):
 
         def start(status, headers):
             result["status"] = int(status.split()[0])
+            self.response_headers = dict(headers)
 
         result["body"] = b"".join(self.app(env, start))
         return result
@@ -186,6 +187,36 @@ class HubTest(unittest.TestCase):
         self.assertEqual(posted["status"], 200, posted["body"])
         key_file.write_text("b" * 48)
         self.assertEqual(self.request(endpoint, host=host, cookie=cookie)["status"], 403)
+
+    def test_gateway_document_login_and_private_embedded_viewer(self):
+        host = "hub.example.test:7892"
+        key_file = self.project.parent / "native-key"
+        key_file.write_text("test-native-key")
+        gateway = Gateway("http://" + host, key_file, "native_session")
+        self.app, self.key = create_hub([self.project], self.server, gateway=gateway)
+        path = "/document/" + self.browser_id
+        landing = self.request(path, host=host, key=False)
+        self.assertEqual(landing["status"], 200)
+        self.assertIn(b'type="password"', landing["body"])
+        self.assertNotIn(b"Published", landing["body"])
+        self.assertEqual(self.response_headers["X-Frame-Options"], "DENY")
+        embed = "/embed" + path
+        self.assertEqual(self.request(embed, host=host, key=False)["status"], 403)
+        cookie = "native_session=test-native-key"
+        response = self.request(embed, host=host, cookie=cookie)
+        self.assertEqual(response["status"], 200)
+        self.assertIn(b"/_share/document-viewer.js", response["body"])
+        self.assertNotIn(b"test-native-key", response["body"])
+        self.assertEqual(self.response_headers["X-Frame-Options"], "SAMEORIGIN")
+        self.assertIn("frame-ancestors 'self'", self.response_headers["Content-Security-Policy"])
+        self.assertIn("base-uri 'self'", self.response_headers["Content-Security-Policy"])
+        self.assertEqual(self.request(embed, "HEAD", host=host, cookie=cookie)["body"], b"")
+        self.assertEqual(self.request(embed, "POST", host=host, cookie=cookie)["status"], 404)
+        self.assertEqual(self.request(embed, cookie=cookie)["status"], 404)
+        self.assertEqual(self.request(embed + "/extra", host=host, cookie=cookie)["status"], 404)
+        self.assertEqual(self.request(path, host=host, cookie=cookie)["body"], response["body"])
+        self.assertEqual(self.response_headers["X-Frame-Options"], "DENY")
+        self.assertEqual(self.request("/_share/document-viewer.js", host=host)["status"], 200)
 
     def test_cannot_select_a_local_path_or_change_destination_from_the_browser(self):
         for data in [
