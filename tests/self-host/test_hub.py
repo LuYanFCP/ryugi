@@ -13,7 +13,7 @@ from wsgiref.util import setup_testing_defaults
 
 TOOL = Path(__file__).resolve().parents[2] / "self-host"
 sys.path.insert(0, str(TOOL))
-from hub import create_hub
+from hub import Gateway, create_hub
 from push import publish
 from server import create_app
 
@@ -49,7 +49,9 @@ class HubTest(unittest.TestCase):
         self.server = f"http://127.0.0.1:{http.server_port}"
         self.app, self.key = create_hub([self.project], self.server)
 
-    def request(self, path, method="GET", data=None, key=True, host="127.0.0.1:8788", origin=None):
+    def request(
+        self, path, method="GET", data=None, key=True, host="127.0.0.1:8788", origin=None, cookie=""
+    ):
         env = {}
         setup_testing_defaults(env)
         body = json.dumps(data).encode() if data is not None else b""
@@ -60,6 +62,7 @@ class HubTest(unittest.TestCase):
             SERVER_PORT="8788",
             CONTENT_TYPE="application/json",
             CONTENT_LENGTH=str(len(body)),
+            HTTP_COOKIE=cookie,
         )
         env["wsgi.input"] = io.BytesIO(body)
         if key:
@@ -70,6 +73,7 @@ class HubTest(unittest.TestCase):
 
         def start(status, headers):
             result["status"] = int(status.split()[0])
+            self.response_headers = dict(headers)
 
         result["body"] = b"".join(self.app(env, start))
         return result
@@ -112,12 +116,114 @@ class HubTest(unittest.TestCase):
         )
         self.assertNotEqual(self.request("/api/share")["status"], 200)
 
+    def test_migrated_project_keeps_browser_id_and_original_share_path(self):
+        target = {"project": 0, "artifact": "document/spec"}
+        old_url = publish(self.project, target["artifact"], self.server)
+        (self.project / ".ryugi").rename(self.project / ".artideck")
+        inventory = json.loads(self.request("/api/artifacts")["body"])
+        self.assertEqual([item["id"] for item in inventory["items"]], [self.browser_id])
+        with patch.dict(
+            os.environ, RYUGI_SELF_HOST_PUBLIC_URL="http://gateway.example.test/prefix/"
+        ):
+            result = self.request("/api/share", "POST", target, origin=ORIGIN)
+        self.assertEqual(result["status"], 200, result["body"])
+        self.assertEqual(
+            json.loads(result["body"])["url"],
+            "http://gateway.example.test/prefix" + old_url.removeprefix(self.server),
+        )
+
+    def test_symlinked_artideck_root_cannot_be_shared(self):
+        (self.project / ".artideck").symlink_to(self.project / ".ryugi", target_is_directory=True)
+        self.assertEqual(json.loads(self.request("/api/artifacts")["body"])["items"], [])
+        with self.assertRaisesRegex(ValueError, "without symlinks"):
+            publish(self.project, "document/spec", self.server)
+
     def test_local_authorization_expires_when_helper_restarts(self):
         self.app, new_key = create_hub([self.project], self.server)
         self.assertNotEqual(self.key, new_key)
         self.assertEqual(self.request("/api/artifacts")["status"], 403)
         self.key = new_key
         self.assertEqual(self.request("/api/artifacts")["status"], 200)
+
+    def test_gateway_home_and_publication_use_the_existing_native_session(self):
+        host = "hub.example.test:7892"
+        origin = "http://" + host
+        key_file = self.project.parent / "native-key"
+        key_file.write_text("a" * 48 + "\n")
+        cookie = "ryugi_artifacts_7892=" + "a" * 48
+        gateway = Gateway(origin, key_file, "ryugi_artifacts_7892")
+        self.app, self.key = create_hub([self.project], self.server, gateway=gateway)
+        home = self.request("/", host=host, key=False)
+        self.assertEqual(home["status"], 200)
+        self.assertIn(b'type="password"', home["body"])
+        self.assertNotIn(b"a" * 48, home["body"])
+        self.assertEqual(self.request("/", "HEAD", host=host), {"status": 200, "body": b""})
+        endpoint = "/_share/api/artifacts"
+        self.assertEqual(self.request(endpoint, host=host)["status"], 403)
+        self.assertEqual(
+            self.request(endpoint, host=host, cookie="other=" + "a" * 48)["status"], 403
+        )
+        self.assertEqual(self.request(endpoint, host=host, cookie=cookie, key=False)["status"], 200)
+        self.assertEqual(
+            self.request(endpoint, host="attacker.invalid", cookie=cookie)["status"], 403
+        )
+        self.assertEqual(self.request("/api/artifacts", host=host, cookie=cookie)["status"], 404)
+        target = {"project": 0, "artifact": "document/spec"}
+        for unsafe_origin in (None, "null", "http://attacker.invalid"):
+            self.assertEqual(
+                self.request(
+                    "/_share/api/share",
+                    "POST",
+                    target,
+                    host=host,
+                    cookie=cookie,
+                    origin=unsafe_origin,
+                )["status"],
+                403,
+            )
+        posted = self.request(
+            "/_share/api/share", "POST", target, host=host, cookie=cookie, origin=origin, key=False
+        )
+        self.assertEqual(posted["status"], 200, posted["body"])
+        key_file.write_text("b" * 48)
+        self.assertEqual(self.request(endpoint, host=host, cookie=cookie)["status"], 403)
+
+    def test_gateway_document_login_and_private_embedded_viewer(self):
+        host = "hub.example.test:7892"
+        key_file = self.project.parent / "native-key"
+        key_file.write_text("test-native-key")
+        gateway = Gateway("http://" + host, key_file, "native_session")
+        self.app, self.key = create_hub([self.project], self.server, gateway=gateway)
+        path = "/document/" + self.browser_id
+        landing = self.request(path, host=host, key=False)
+        self.assertEqual(landing["status"], 200)
+        self.assertIn(b'type="password"', landing["body"])
+        self.assertNotIn(b"Published", landing["body"])
+        self.assertEqual(self.response_headers["X-Frame-Options"], "DENY")
+        embed = "/embed" + path
+        self.assertEqual(self.request(embed, host=host, key=False)["status"], 403)
+        cookie = "native_session=test-native-key"
+        self.assertEqual(self.request("/index.js", host=host, key=False)["status"], 403)
+        entry = self.request("/index.js", host=host, cookie=cookie)
+        self.assertEqual(entry["status"], 200)
+        self.assertEqual(entry["body"].splitlines(), [
+            b'import "/_share/http-crypto.js";', b'export * from "/index.js?hub_native=1";'
+        ])
+        self.assertEqual(self.response_headers["Cache-Control"], "no-store")
+        response = self.request(embed, host=host, cookie=cookie)
+        self.assertEqual(response["status"], 200)
+        self.assertIn(b"/_share/document-viewer.js", response["body"])
+        self.assertNotIn(b"test-native-key", response["body"])
+        self.assertEqual(self.response_headers["X-Frame-Options"], "SAMEORIGIN")
+        self.assertIn("frame-ancestors 'self'", self.response_headers["Content-Security-Policy"])
+        self.assertIn("base-uri 'self'", self.response_headers["Content-Security-Policy"])
+        self.assertEqual(self.request(embed, "HEAD", host=host, cookie=cookie)["body"], b"")
+        self.assertEqual(self.request(embed, "POST", host=host, cookie=cookie)["status"], 404)
+        self.assertEqual(self.request(embed, cookie=cookie)["status"], 404)
+        self.assertEqual(self.request(embed + "/extra", host=host, cookie=cookie)["status"], 404)
+        self.assertEqual(self.request(path, host=host, cookie=cookie)["body"], response["body"])
+        self.assertEqual(self.response_headers["X-Frame-Options"], "DENY")
+        self.assertEqual(self.request("/_share/document-viewer.js", host=host)["status"], 200)
 
     def test_cannot_select_a_local_path_or_change_destination_from_the_browser(self):
         for data in [

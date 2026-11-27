@@ -6,7 +6,10 @@ const publish = get("publish");
 const status = get("status");
 const result = get("result");
 const storageKey = "ryugi-self-host-session";
-const requested = new URLSearchParams(location.search).get("artifact");
+const gateway = location.pathname === "/_share/";
+const selection = new URLSearchParams(location.search);
+const requested = selection.get("artifact");
+const requestedProject = selection.get("project");
 let session;
 let projects = [];
 let items = [];
@@ -14,7 +17,7 @@ let items = [];
 async function request(path, options = {}) {
   const response = await fetch(path, {
     ...options,
-    headers: { ...options.headers, "X-Hub-Session": session },
+    headers: gateway ? options.headers : { ...options.headers, "X-Hub-Session": session },
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || `请求失败（HTTP ${response.status}）。`);
@@ -32,14 +35,17 @@ function selectionChanged() {
 }
 
 async function load() {
-  const pairing = new URLSearchParams(location.hash.slice(1)).get("session");
-  if (pairing) {
-    history.replaceState(null, "", location.pathname + location.search);
-    localStorage.setItem(storageKey, pairing);
+  get("home").hidden = !gateway;
+  if (!gateway) {
+    const pairing = new URLSearchParams(location.hash.slice(1)).get("session");
+    if (pairing) {
+      history.replaceState(null, "", location.pathname + location.search);
+      localStorage.setItem(storageKey, pairing);
+    }
+    session = localStorage.getItem(storageKey);
+    if (!session) throw new Error("请先在这台电脑上启动 self-host/hub.py，再打开终端打印的授权链接。");
   }
-  session = localStorage.getItem(storageKey);
-  if (!session) throw new Error("请先在这台电脑上启动 self-host/hub.py，再打开终端打印的授权链接。");
-  const inventory = await request("/api/artifacts");
+  const inventory = await request("./api/artifacts");
   projects = inventory.projects;
   items = inventory.items;
   const groups = projects.map((name) => {
@@ -54,8 +60,9 @@ async function load() {
   get("server").textContent = inventory.server;
   get("details").hidden = false;
   picker.disabled = items.length === 0;
-  const matches = items.filter(({ artifact, id }) =>
-    requested === artifact || (id && requested === artifact.split("/")[0] + "/" + id)
+  const matches = items.filter(({ project, artifact, id }) =>
+    (requestedProject === null || requestedProject === String(project)) &&
+    (requested === artifact || (id && requested === artifact.split("/")[0] + "/" + id))
   );
   if (matches.length === 1) picker.value = String(items.indexOf(matches[0]));
   selectionChanged();
@@ -73,7 +80,7 @@ get("share").addEventListener("submit", async (event) => {
   result.hidden = true;
   status.textContent = "正在上传快照…";
   try {
-    const { url } = await request("/api/share", {
+    const { url } = await request("./api/share", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ project, artifact }),
@@ -96,14 +103,15 @@ get("copy").addEventListener("click", async () => {
   } catch {
     get("url").focus();
     get("url").select();
-    status.textContent = "已选中链接，请使用系统复制快捷键。";
+    status.textContent = document.execCommand("copy")
+      ? "分享链接已复制。" : "已选中链接，请使用系统复制快捷键。";
   }
 });
 
 window.addEventListener("storage", (event) => {
-  if (event.key === storageKey) location.reload();
+  if (!gateway && event.key === storageKey) location.reload();
 });
 window.addEventListener("hashchange", () => {
-  if (new URLSearchParams(location.hash.slice(1)).has("session")) location.reload();
+  if (!gateway && new URLSearchParams(location.hash.slice(1)).has("session")) location.reload();
 });
 load().catch((error) => { status.textContent = error.message; });

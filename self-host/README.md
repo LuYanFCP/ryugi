@@ -48,13 +48,102 @@ export RYUGI_SELF_HOST_URL=https://artifacts.example.com
 
 **发给读者的是生成的分享链接。** 终端打印的授权链接用于本机发布，有效期为本次运行。自部署服务器的发布令牌只由本机 Python 进程使用。读者打开快照时，你的工作机可以离线。
 
+## 在已有 Hub 域名上分享
+
+网关首页可以用原 Hub 密钥登录，列出项目里的产物。点击产物名会打开原生 viewer，点击右侧的 **分享** 可以生成只读链接。首页的 **打开原版资源库** 会进入原 Hub。直接打开 `/document/…#小节` 时可以在原页面登录，登录后会回到对应小节。读者使用生成的 `/a/…/` 链接即可打开快照。
+
+在 Hub 所在机器上配置好接收端地址和发布令牌，启动分享进程。例如，若原生 Hub 监听 27319 端口、对外地址为 `https://hub.example.com`，且同一网关提供快照，可以这样配置。
+
+```bash
+export RYUGI_SELF_HOST_URL=http://127.0.0.1:8787
+export RYUGI_SELF_HOST_PUBLIC_URL=https://hub.example.com
+python3 self-host/hub.py --project-dir /path/to/project \
+  --gateway-origin https://hub.example.com \
+  --hub-key-file ~/.ryugi/server/key --hub-cookie ryugi_artifacts_27319
+```
+
+使用原 Hub 实际的密钥文件和登录 cookie 名称。网关把浏览器的原始 Host、Origin 和 cookie 转给分享进程。分享进程在每次读取目录或发布时核对原 Hub 会话，发布还须来自配置的浏览器源。
+
+在 Nginx 的 `http` 配置中加入以下映射，把两个上游地址替换为实际部署值。
+
+```nginx
+map $args $ryugi_home {
+    default          127.0.0.1:27319;
+    ""               127.0.0.1:8788;
+    ~^key=[^&]*$     127.0.0.1:8788;
+}
+map "$arg_key:$uri" $ryugi_document {
+    default                  127.0.0.1:27319;
+    "~^[^:]+:/document/"     127.0.0.1:8788;
+}
+map "$scheme:$arg_hub_native" $ryugi_entry {
+    default          127.0.0.1:27319;
+    "http:"          127.0.0.1:8788;
+}
+map "$upstream_status:$upstream_http_content_type:$uri" $ryugi_asset_cache {
+    default "no-store";
+    "~^200:(text/(javascript|css)|application/(javascript|wasm))[^:]*:/[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8}\.(js|css|wasm)$" "private, max-age=31536000, immutable";
+}
+```
+
+在原 Hub 的 `server` 配置中添加以下路由。登录页通过 `/?view=library` 向原生 Hub 验证密钥并取得其 HttpOnly cookie。
+
+```nginx
+location = / {
+    proxy_set_header Host $http_host;
+    proxy_pass http://$ryugi_home;
+}
+location = /index.js {
+    gzip on;
+    gzip_types text/javascript application/javascript;
+    gzip_vary on;
+    gzip_proxied any;
+    proxy_set_header Host $http_host;
+    proxy_pass http://$ryugi_entry;
+}
+location ~ "^/[A-Za-z0-9_.-]+\.(js|css|wasm)$" {
+    gzip on;
+    gzip_types text/javascript application/javascript text/css application/wasm;
+    gzip_comp_level 5;
+    gzip_vary on;
+    gzip_proxied any;
+    proxy_set_header Host $http_host;
+    proxy_hide_header Cache-Control;
+    add_header Cache-Control $ryugi_asset_cache always;
+    add_header Vary Cookie always;
+    proxy_pass http://127.0.0.1:27319;
+}
+location ^~ /_share/ {
+    client_max_body_size 2k;
+    proxy_set_header Host $http_host;
+    proxy_pass http://127.0.0.1:8788;
+}
+location ~ "^/(embed/)?document/[A-Za-z0-9_-]+/?$" {
+    proxy_set_header Host $http_host;
+    proxy_intercept_errors on;
+    error_page 403 = @ryugi_document_login;
+    add_header Vary Cookie always;
+    proxy_pass http://$ryugi_document;
+}
+location @ryugi_document_login {
+    proxy_set_header Host $http_host;
+    proxy_pass http://127.0.0.1:8788;
+}
+```
+
+浏览器首次打开时，网关会压缩查看器的 JS、CSS 和 WebAssembly。浏览器可以复用文件名带有内容哈希的资源；升级后文件名会随内容变化。文档和 API 仍按原来的访问与缓存规则处理。
+
+已登录的文档和内嵌页面直接使用原 Hub 输出的 HTML，使浏览器能提前并行加载依赖。在内网 HTTP 域名上，浏览器可能缺少查看器使用的 `crypto.randomUUID()`。网关会在原版资源库、文档页面和内嵌查看器的公共 JS 入口先加载 HTTP 兼容脚本。它用浏览器的 `crypto.getRandomValues()` 提供 UUID v4，再从本机安装的 Hub 加载其文档查看器和样式。文档内容、段落定位和 WebSocket 均由原 Hub 处理。
+
 ## 从命令行推送
 
 ```bash
 python3 self-host/push.py --project-dir /path/to/project --artifact html/demo
 ```
 
-这个例子读取 `/path/to/project/.ryugi/artifacts/html/demo/`。要分享设计文档，把定位符换成 `document/spec`。工具会在上传成功后打印完整的分享链接。可以用 `--server URL` 为单次推送指定目标。HTTP 仅用于回环地址上的本机服务或 SSH 隧道。
+这个例子读取项目中的 `html/demo`。Artideck 1.116.0 使用 `.artideck/artifacts/`，旧版使用 `.ryugi/artifacts/`。网页和命令行都能识别这两个目录。要分享设计文档，把定位符换成 `document/spec`。
+
+上传成功后会返回完整分享链接。`--server URL` 可以为单次推送指定上传地址，上传令牌仅通过 HTTPS 或本机回环地址发送。如果接收端与 Hub 在同一机器，且读者通过网关访问，可设置 `RYUGI_SELF_HOST_URL=http://127.0.0.1:8787` 和 `RYUGI_SELF_HOST_PUBLIC_URL=https://artifacts.example.com`。第二个地址用于生成给读者的链接。
 
 网页和命令行使用同一套推送逻辑。重新推送同一个项目和定位符会更新原链接，包括移除本地已经删除的文件。服务端拒绝上传或写入失败时，读者仍能打开先前的完整版本。如果上传后连接中断，可以重试。默认用项目绝对路径的哈希区分项目。团队或 CI 需要从多个检出目录更新同一链接时，从第一次发布起就给 `hub.py` 或 `push.py` 传相同的 `--namespace my-team/my-project`。此选项适用于单个项目。
 
