@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Ryugi · 分享本地产物",
+  "version": "1.0.0",
+  "description": "把当前本地 Hub 产物分享到你配置的自部署服务器。",
+  "permissions": ["activeTab"],
+  "action": { "default_title": "分享到自部署" },
+  "background": { "service_worker": "action.js" },
+  "content_scripts": [{
+    "matches": ["http://127.0.0.1/*", "http://localhost/*"],
+    "include_globs": ["http://*:27319/*", "http://*:27320/*", "http://*:27321/*"],
+    "js": ["button.js"],
+    "css": ["button.css"]
+  }]
+}

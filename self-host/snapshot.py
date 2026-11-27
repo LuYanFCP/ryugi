@@ -2,9 +2,8 @@
 
 import re
 
-LOCATOR = re.compile(
-    r"(?:artboard|document|html|report|slides|storyboard|verify|whiteboard)/[a-z0-9][a-z0-9-]*"
-)
+ARTIFACT_TYPES = ("artboard", "document", "html", "report", "slides", "storyboard", "verify", "whiteboard")
+LOCATOR = re.compile(rf"(?:{'|'.join(ARTIFACT_TYPES)})/[a-z0-9][a-z0-9-]*")
 MAX_BYTES = 64 * 1024 * 1024
 MAX_FILES = 1024
 
