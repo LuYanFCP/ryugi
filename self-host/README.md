@@ -48,6 +48,46 @@ export RYUGI_SELF_HOST_URL=https://artifacts.example.com
 
 **发给读者的是生成的分享链接。** 终端打印的授权链接用于本机发布，有效期为本次运行。自部署服务器的发布令牌只由本机 Python 进程使用。读者打开快照时，你的工作机可以离线。
 
+## 在已有 Hub 域名上分享
+
+网关首页可以用原 Hub 密钥登录，列出项目里的产物。点击产物名会打开原生 viewer，点击右侧的 **分享** 可以生成只读链接。首页的 **打开原版资源库** 会进入原 Hub。已有文档深链和读者的 `/a/…/` 链接沿用原地址。
+
+在 Hub 所在机器上配置好接收端地址和发布令牌，启动分享进程。例如，若原生 Hub 监听 27319 端口、对外地址为 `https://hub.example.com`，且同一网关提供快照，可以这样配置。
+
+```bash
+export RYUGI_SELF_HOST_URL=http://127.0.0.1:8787
+export RYUGI_SELF_HOST_PUBLIC_URL=https://hub.example.com
+python3 self-host/hub.py --project-dir /path/to/project \
+  --gateway-origin https://hub.example.com \
+  --hub-key-file ~/.ryugi/server/key --hub-cookie ryugi_artifacts_27319
+```
+
+使用原 Hub 实际的密钥文件和登录 cookie 名称。网关把浏览器的原始 Host、Origin 和 cookie 转给分享进程。分享进程在每次读取目录或发布时核对原 Hub 会话，发布还须来自配置的浏览器源。
+
+在 Nginx 的 `http` 配置中加入以下映射，把两个上游地址替换为实际部署值。
+
+```nginx
+map $args $ryugi_home {
+    default          127.0.0.1:27319;
+    ""               127.0.0.1:8788;
+    ~^key=[^&]*$     127.0.0.1:8788;
+}
+```
+
+在原 Hub 的 `server` 配置中添加以下两条路由。原有的 viewer、WebSocket 和快照路由继续处理各自的路径。首页通过 `/?view=library` 向原生 Hub 验证密钥并取得其 HttpOnly cookie。
+
+```nginx
+location = / {
+    proxy_set_header Host $http_host;
+    proxy_pass http://$ryugi_home;
+}
+location ^~ /_share/ {
+    client_max_body_size 2k;
+    proxy_set_header Host $http_host;
+    proxy_pass http://127.0.0.1:8788;
+}
+```
+
 ## 从命令行推送
 
 ```bash

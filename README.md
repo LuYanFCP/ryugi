@@ -191,7 +191,8 @@ npx ryugi-artifacts
 Local first, no subscription, no agent session needed. One server covers every project on the
 machine, with ⌘K to jump and links that survive a restart. `publish` shares one to
 [Ryugi Cloud](https://ryugi.innei.dev). To share a read-only snapshot on your own domain,
-start this fork's receiver with Docker Compose. Use the local Hub's **分享到自部署**
+start this fork's receiver with Docker Compose. On a configured Hub gateway, use
+**分享** next to an artifact on the homepage. You can also use the local Hub's **分享到自部署**
 button with this fork's browser extension, select an artifact in the standalone share
 page, or use `self-host/push.py` from the terminal.
 See the [self-hosting guide](self-host/README.md).

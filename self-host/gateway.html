@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>产物 Hub</title>
+  <link rel="stylesheet" href="/_share/hub.css">
+  <link rel="stylesheet" href="/_share/gateway.css">
+  <script src="/_share/gateway.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>产物 Hub</h1>
+      <a id="native" href="/?view=library" target="_blank" rel="noopener noreferrer" hidden>打开原版资源库 ↗</a>
+    </header>
+    <form id="login" hidden>
+      <label for="key">Hub 访问密钥</label>
+      <input id="key" type="password" autocomplete="current-password" required aria-describedby="hint">
+      <p id="hint">可以输入原来的密钥，也可以粘贴带 key 的 Hub 链接。</p>
+      <button id="signin" type="submit">登录 Hub</button>
+    </form>
+    <section id="library" hidden>
+      <label for="filter">查找产物</label>
+      <input id="filter" type="search" placeholder="按类型、名称或项目查找">
+      <div id="projects"></div>
+    </section>
+    <p id="status" role="status" aria-live="polite">正在打开 Hub…</p>
+    <noscript>请启用 JavaScript，或使用已有的完整链接打开原版资源库。</noscript>
+  </main>
+</body>
+</html>

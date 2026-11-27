@@ -13,7 +13,7 @@ from wsgiref.util import setup_testing_defaults
 
 TOOL = Path(__file__).resolve().parents[2] / "self-host"
 sys.path.insert(0, str(TOOL))
-from hub import create_hub
+from hub import Gateway, create_hub
 from push import publish
 from server import create_app
 
@@ -49,7 +49,9 @@ class HubTest(unittest.TestCase):
         self.server = f"http://127.0.0.1:{http.server_port}"
         self.app, self.key = create_hub([self.project], self.server)
 
-    def request(self, path, method="GET", data=None, key=True, host="127.0.0.1:8788", origin=None):
+    def request(
+        self, path, method="GET", data=None, key=True, host="127.0.0.1:8788", origin=None, cookie=""
+    ):
         env = {}
         setup_testing_defaults(env)
         body = json.dumps(data).encode() if data is not None else b""
@@ -60,6 +62,7 @@ class HubTest(unittest.TestCase):
             SERVER_PORT="8788",
             CONTENT_TYPE="application/json",
             CONTENT_LENGTH=str(len(body)),
+            HTTP_COOKIE=cookie,
         )
         env["wsgi.input"] = io.BytesIO(body)
         if key:
@@ -118,7 +121,9 @@ class HubTest(unittest.TestCase):
         (self.project / ".ryugi").rename(self.project / ".artideck")
         inventory = json.loads(self.request("/api/artifacts")["body"])
         self.assertEqual([item["id"] for item in inventory["items"]], [self.browser_id])
-        with patch.dict(os.environ, RYUGI_SELF_HOST_PUBLIC_URL="http://gateway.example.test/prefix/"):
+        with patch.dict(
+            os.environ, RYUGI_SELF_HOST_PUBLIC_URL="http://gateway.example.test/prefix/"
+        ):
             result = self.request("/api/share", "POST", target, origin=ORIGIN)
         self.assertEqual(result["status"], 200, result["body"])
         self.assertEqual(
@@ -138,6 +143,49 @@ class HubTest(unittest.TestCase):
         self.assertEqual(self.request("/api/artifacts")["status"], 403)
         self.key = new_key
         self.assertEqual(self.request("/api/artifacts")["status"], 200)
+
+    def test_gateway_home_and_publication_use_the_existing_native_session(self):
+        host = "hub.example.test:7892"
+        origin = "http://" + host
+        key_file = self.project.parent / "native-key"
+        key_file.write_text("a" * 48 + "\n")
+        cookie = "ryugi_artifacts_7892=" + "a" * 48
+        gateway = Gateway(origin, key_file, "ryugi_artifacts_7892")
+        self.app, self.key = create_hub([self.project], self.server, gateway=gateway)
+        home = self.request("/", host=host, key=False)
+        self.assertEqual(home["status"], 200)
+        self.assertIn(b'type="password"', home["body"])
+        self.assertNotIn(b"a" * 48, home["body"])
+        self.assertEqual(self.request("/", "HEAD", host=host), {"status": 200, "body": b""})
+        endpoint = "/_share/api/artifacts"
+        self.assertEqual(self.request(endpoint, host=host)["status"], 403)
+        self.assertEqual(
+            self.request(endpoint, host=host, cookie="other=" + "a" * 48)["status"], 403
+        )
+        self.assertEqual(self.request(endpoint, host=host, cookie=cookie, key=False)["status"], 200)
+        self.assertEqual(
+            self.request(endpoint, host="attacker.invalid", cookie=cookie)["status"], 403
+        )
+        self.assertEqual(self.request("/api/artifacts", host=host, cookie=cookie)["status"], 404)
+        target = {"project": 0, "artifact": "document/spec"}
+        for unsafe_origin in (None, "null", "http://attacker.invalid"):
+            self.assertEqual(
+                self.request(
+                    "/_share/api/share",
+                    "POST",
+                    target,
+                    host=host,
+                    cookie=cookie,
+                    origin=unsafe_origin,
+                )["status"],
+                403,
+            )
+        posted = self.request(
+            "/_share/api/share", "POST", target, host=host, cookie=cookie, origin=origin, key=False
+        )
+        self.assertEqual(posted["status"], 200, posted["body"])
+        key_file.write_text("b" * 48)
+        self.assertEqual(self.request(endpoint, host=host, cookie=cookie)["status"], 403)
 
     def test_cannot_select_a_local_path_or_change_destination_from_the_browser(self):
         for data in [

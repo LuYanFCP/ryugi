@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import stat
+from http.cookies import CookieError, SimpleCookie
 from pathlib import Path
 from socketserver import ThreadingMixIn
 from wsgiref.simple_server import WSGIServer, make_server
@@ -18,6 +19,41 @@ HOST = "127.0.0.1"
 PORT = 8788
 ASSETS = Path(__file__).resolve().parent
 HUB_ID = re.compile(rb"[a-zA-Z0-9_-]{8,64}")
+GATEWAY_PATH = "/_share/"
+
+
+class Gateway:
+    """Accept the native Hub cookie only at the configured browser origin."""
+
+    def __init__(self, origin, key_file, cookie_name):
+        url = destination_url(origin, for_readers=True)
+        if url.path not in ("", "/") or not re.fullmatch(r"[A-Za-z0-9_-]+", cookie_name):
+            raise ValueError("Provide the gateway origin and the native Hub cookie name")
+        host = f"[{url.hostname}]" if ":" in url.hostname else url.hostname
+        default_port = 443 if url.scheme == "https" else 80
+        self.host = f"{host}:{url.port}" if url.port and url.port != default_port else host
+        self.origin = f"{url.scheme}://{self.host}"
+        self.cookie_name = cookie_name
+        self.key_file = key_file
+        if not self.read_key():
+            raise ValueError("The native Hub key file is empty or invalid")
+
+    def read_key(self):
+        with self.key_file.open("rb") as source:
+            raw = source.read(513)
+        key = raw.rstrip(b"\r\n")
+        return key if len(raw) <= 512 and re.fullmatch(rb"[A-Za-z0-9._~-]+", key) else b""
+
+    def authorized(self, cookie):
+        try:
+            jar = SimpleCookie()
+            jar.load(cookie)
+            entry = jar.get(self.cookie_name)
+            if not entry or not entry.value or not entry.value.isascii():
+                return False
+            return secrets.compare_digest(entry.value.encode("ascii"), self.read_key())
+        except (CookieError, OSError):
+            return False
 
 
 def artifact_id(folder):
@@ -55,7 +91,7 @@ def list_artifacts(projects):
     return items
 
 
-def create_hub(project_dirs, server, namespace=None):
+def create_hub(project_dirs, server, namespace=None, *, gateway=None):
     server = destination_url(server).geturl().rstrip("/")
     publishing_token()
     projects = list(dict.fromkeys(path.resolve(strict=True) for path in project_dirs))
@@ -69,6 +105,19 @@ def create_hub(project_dirs, server, namespace=None):
         "/hub.js": ("text/javascript", (ASSETS / "hub.js").read_bytes()),
         "/hub.css": ("text/css", (ASSETS / "hub.css").read_bytes()),
     }
+    if gateway:
+        landing = (ASSETS / "gateway.html").read_bytes()
+        gateway_assets = {
+            "/gateway.js": ("text/javascript", (ASSETS / "gateway.js").read_bytes()),
+            "/gateway.css": ("text/css", (ASSETS / "gateway.css").read_bytes()),
+        }
+        reader_base = (
+            destination_url(
+                os.environ.get("RYUGI_SELF_HOST_PUBLIC_URL") or server, for_readers=True
+            )
+            .geturl()
+            .rstrip("/")
+        )
 
     def app(env, start_response):
         def respond(status, data, content_type="application/json"):
@@ -90,22 +139,40 @@ def create_hub(project_dirs, server, namespace=None):
                     ),
                 ],
             )
-            return [body]
+            return [] if env["REQUEST_METHOD"] == "HEAD" else [body]
 
-        host = f"{HOST}:{env['SERVER_PORT']}"
+        host = env.get("HTTP_HOST", "").lower()
+        local_host = f"{HOST}:{env['SERVER_PORT']}"
+        via_gateway = gateway is not None and host == gateway.host
+        expected_origin = gateway.origin if via_gateway else f"http://{local_host}"
         origin = env.get("HTTP_ORIGIN")
-        if env.get("HTTP_HOST") != host or (origin is not None and origin != f"http://{host}"):
-            return respond("403 Forbidden", {"error": "仅接受本机分享页面的请求。"})
+        if (not via_gateway and host != local_host) or (
+            origin is not None and origin != expected_origin
+        ):
+            return respond("403 Forbidden", {"error": "请从已配置的 Hub 地址访问。"})
 
         path, method = env["PATH_INFO"], env["REQUEST_METHOD"]
-        if method == "GET" and path in assets:
+        if via_gateway:
+            if path == "/" and method in {"GET", "HEAD"}:
+                return respond("200 OK", landing, "text/html")
+            if not path.startswith(GATEWAY_PATH):
+                return respond("404 Not Found", {"error": "页面不存在。"})
+            path = "/" + path.removeprefix(GATEWAY_PATH)
+            if method in {"GET", "HEAD"} and path in gateway_assets:
+                content_type, data = gateway_assets[path]
+                return respond("200 OK", data, content_type)
+        if method in {"GET", "HEAD"} and path in assets:
             content_type, data = assets[path]
             return respond("200 OK", data, content_type)
         if path not in {"/api/artifacts", "/api/share"}:
             return respond("404 Not Found", {"error": "页面不存在。"})
-        supplied = env.get("HTTP_X_HUB_SESSION", "")
-        if not supplied.isascii() or not secrets.compare_digest(supplied, key):
-            return respond("403 Forbidden", {"error": "请先打开启动命令打印的本机授权链接。"})
+        if via_gateway:
+            if not gateway.authorized(env.get("HTTP_COOKIE", "")):
+                return respond("403 Forbidden", {"error": "请在 Hub 首页使用原访问密钥登录。"})
+        else:
+            supplied = env.get("HTTP_X_HUB_SESSION", "")
+            if not supplied.isascii() or not secrets.compare_digest(supplied, key):
+                return respond("403 Forbidden", {"error": "请先打开启动命令打印的本机授权链接。"})
         if method == "GET" and path == "/api/artifacts":
             try:
                 items = list_artifacts(projects)
@@ -114,12 +181,17 @@ def create_hub(project_dirs, server, namespace=None):
                     "500 Internal Server Error", {"error": "无法读取项目目录，请检查本机权限。"}
                 )
             return respond(
-                "200 OK", {"server": server, "projects": list(map(str, projects)), "items": items}
+                "200 OK",
+                {
+                    "server": reader_base if via_gateway else server,
+                    "projects": list(map(str, projects)),
+                    "items": items,
+                },
             )
         if method != "POST" or path != "/api/share":
             return respond("405 Method Not Allowed", {"error": "此接口不支持该请求方式。"})
-        if origin != f"http://{host}":
-            return respond("403 Forbidden", {"error": "请从本机分享页面发布。"})
+        if origin != expected_origin:
+            return respond("403 Forbidden", {"error": "请从 Hub 的分享页面发布。"})
         length = env.get("CONTENT_LENGTH", "")
         if (
             env.get("CONTENT_TYPE", "").split(";")[0] != "application/json"
@@ -169,9 +241,25 @@ if __name__ == "__main__":
         "--server", default=os.environ.get("RYUGI_SELF_HOST_URL"), help="snapshot server base URL"
     )
     parser.add_argument("--namespace", help="stable name for a single project, as in push.py")
+    parser.add_argument(
+        "--gateway-origin", help="browser origin of the reverse proxy serving the Hub"
+    )
+    parser.add_argument(
+        "--hub-key-file", type=Path, help="native Hub key file used to verify its session"
+    )
+    parser.add_argument("--hub-cookie", help="name of the native Hub's HttpOnly cookie")
     args = parser.parse_args()
     try:
-        app, key = create_hub(args.project_dir or [Path.cwd()], args.server, args.namespace)
+        gateway = None
+        if any((args.gateway_origin, args.hub_key_file, args.hub_cookie)):
+            if not all((args.gateway_origin, args.hub_key_file, args.hub_cookie)):
+                parser.error(
+                    "--gateway-origin, --hub-key-file and --hub-cookie must be given together"
+                )
+            gateway = Gateway(args.gateway_origin, args.hub_key_file, args.hub_cookie)
+        app, key = create_hub(
+            args.project_dir or [Path.cwd()], args.server, args.namespace, gateway=gateway
+        )
         with make_server(HOST, PORT, app, server_class=LocalServer) as http:
             print(
                 f"在本机浏览器打开此链接以启用分享：http://{HOST}:{PORT}/#session={key}", flush=True
