@@ -59,10 +59,8 @@ def write_snapshot(folder, archive):
         raise ValueError("ZIP upload exceeds 64 MiB")
 
 
-def push(args):
-    if not LOCATOR.fullmatch(args.artifact):
-        raise ValueError("Expected an artifact locator such as html/demo or document/spec")
-    url = urlsplit(args.server or "")
+def destination_url(server):
+    url = urlsplit(server or "")
     loopback = url.hostname in {"localhost", "127.0.0.1", "::1"}
     if (
         not url.hostname
@@ -73,17 +71,30 @@ def push(args):
         or not (url.scheme == "https" or (url.scheme == "http" and loopback))
     ):
         raise ValueError("Set --server to an HTTPS base URL (HTTP is available on loopback)")
+    return url
+
+
+def publishing_token():
     token = os.environ.get("RYUGI_SELF_HOST_TOKEN")
     if not token:
         raise ValueError("Set RYUGI_SELF_HOST_TOKEN to the server's publishing token")
+    if not token.isprintable() or any(ord(char) > 255 for char in token):
+        raise ValueError("RYUGI_SELF_HOST_TOKEN contains characters unsupported in an HTTP header")
+    return token
 
-    project = args.project_dir.resolve(strict=True)
-    folder = project / ".ryugi" / "artifacts" / args.artifact
+
+def publish(project_dir, artifact, server, namespace=None):
+    if not LOCATOR.fullmatch(artifact):
+        raise ValueError("Expected an artifact locator such as html/demo or document/spec")
+    url = destination_url(server)
+    token = publishing_token()
+    project = project_dir.resolve(strict=True)
+    folder = project / ".ryugi" / "artifacts" / artifact
     if folder.resolve(strict=True) != folder or not folder.is_dir():
         raise ValueError("The artifact must be a directory inside the project, without symlinks")
-    namespace = hashlib.sha256((args.namespace or str(project)).encode()).hexdigest()
+    namespace_hash = hashlib.sha256((namespace or str(project)).encode()).hexdigest()
     prefix = url.path.rstrip("/")
-    target = f"{prefix}/api/artifacts/{namespace}/{args.artifact}"
+    target = f"{prefix}/api/artifacts/{namespace_hash}/{artifact}"
     connection = (
         http.client.HTTPSConnection if url.scheme == "https" else http.client.HTTPConnection
     )
@@ -105,7 +116,7 @@ def push(args):
             )
             response = client.getresponse()
             if response.status != 200:
-                raise ValueError(f"Server returned HTTP {response.status} {response.reason}")
+                raise ValueError(f"Server returned HTTP {response.status}")
             result = json.loads(response.read(4096))
             path = result.get("path") if isinstance(result, dict) else None
             if not isinstance(path, str) or not re.fullmatch(r"/a/[a-f0-9]{32}/", path):
@@ -131,6 +142,6 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     try:
-        print(push(args))
+        print(publish(args.project_dir, args.artifact, args.server, args.namespace))
     except (OSError, ValueError, http.client.HTTPException) as error:
         parser.exit(1, f"Push failed: {error}\n")

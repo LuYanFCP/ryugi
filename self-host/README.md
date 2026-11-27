@@ -22,21 +22,41 @@ artifacts.example.com {
 
 SQLite 数据库保存在 Compose 的 `snapshots` 卷中。更新服务时再次运行同一条 `up -d --build` 命令。容器重建和更换发布令牌都会保留已有链接。备份时先 `docker compose --env-file self-host/.env -f self-host/compose.yaml stop`，再备份整个数据卷。
 
-## 从工作机推送
+## 在工作机配置发布目标
 
-推送工具只用 Python 3 标准库。在工作机检出本 fork，进入仓库根目录。通过密码管理器或 SSH 取得服务器上生成的令牌，在 Bash 中运行以下命令并粘贴令牌。
+本机分享工具只用 Python 3 标准库。在工作机检出本 fork，进入仓库根目录。通过密码管理器或 SSH 取得服务器上生成的令牌，在 Bash 中运行以下命令并粘贴令牌。把域名替换成你的自部署地址。
 
 ```bash
 read -rsp 'Publishing token: ' RYUGI_SELF_HOST_TOKEN && echo
 export RYUGI_SELF_HOST_TOKEN
 export RYUGI_SELF_HOST_URL=https://artifacts.example.com
+```
 
+## 在本地 Hub 里点分享
+
+1. 在设置好环境变量的终端启动分享工具。将路径换成产物所在的项目根目录，有多个项目时可重复传入 `--project-dir`。
+
+   ```bash
+   python3 self-host/hub.py --project-dir /path/to/project
+   ```
+
+2. 在工作机浏览器打开终端打印的完整授权链接。每次启动后，在要使用的浏览器里打开一次即可。分享工具只监听 `127.0.0.1:8788`，运行期间保持终端开启。
+3. 要在原来的 Hub 页面显示按钮，在 Chrome 的 `chrome://extensions` 或 Edge 的 `edge://extensions` 启用开发者模式，选择「加载已解压的扩展」，选中本仓库的 `self-host/browser-extension/`。刷新已打开的 Hub 标签页。
+4. 打开一个本地产物，点击右下角的 **分享到自部署**。核对项目、产物和目标域名，点 **生成分享链接**，再点 **复制链接** 发给读者。Hub 首页的同一个按钮会打开产物选择器。
+
+页面按钮支持通过 `localhost` 或 `127.0.0.1` 打开的默认 Hub 端口 27319–27321。使用自定义端口或 IPv6 回环地址时，点击浏览器工具栏里的扩展图标。其他浏览器可直接打开第 2 步的本机页面，手动选择产物并分享。如果地址对应多个项目，页面会要求你选择。
+
+**发给读者的是生成的分享链接。** 终端打印的授权链接用于本机发布，有效期为本次运行。自部署服务器的发布令牌只由本机 Python 进程使用。读者打开快照时，你的工作机可以离线。
+
+## 从命令行推送
+
+```bash
 python3 self-host/push.py --project-dir /path/to/project --artifact html/demo
 ```
 
 这个例子读取 `/path/to/project/.ryugi/artifacts/html/demo/`。要分享设计文档，把定位符换成 `document/spec`。工具会在上传成功后打印完整的分享链接。可以用 `--server URL` 为单次推送指定目标。HTTP 仅用于回环地址上的本机服务或 SSH 隧道。
 
-重新推送同一个项目和定位符会更新原链接，包括移除本地已经删除的文件。服务端拒绝上传或写入失败时，读者仍能打开先前的完整版本。如果上传后连接中断，可以重试同一命令。默认用项目绝对路径的哈希区分项目。团队成员或 CI 要从多个检出目录更新同一链接，可以从第一次推送起就传相同的 `--namespace my-team/my-project`。
+网页和命令行使用同一套推送逻辑。重新推送同一个项目和定位符会更新原链接，包括移除本地已经删除的文件。服务端拒绝上传或写入失败时，读者仍能打开先前的完整版本。如果上传后连接中断，可以重试。默认用项目绝对路径的哈希区分项目。团队或 CI 需要从多个检出目录更新同一链接时，从第一次发布起就给 `hub.py` 或 `push.py` 传相同的 `--namespace my-team/my-project`。此选项适用于单个项目。
 
 ## 读者能看到什么
 
