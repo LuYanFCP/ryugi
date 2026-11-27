@@ -76,6 +76,10 @@ map "$scheme:$http_x_ryugi_native_document" $ryugi_document {
     default          127.0.0.1:27319;
     "http:"          127.0.0.1:8788;
 }
+map "$scheme:$arg_hub_native" $ryugi_entry {
+    default          127.0.0.1:27319;
+    "http:"          127.0.0.1:8788;
+}
 ```
 
 在原 Hub 的 `server` 配置中添加以下路由。登录页通过 `/?view=library` 向原生 Hub 验证密钥并取得其 HttpOnly cookie。
@@ -84,6 +88,10 @@ map "$scheme:$http_x_ryugi_native_document" $ryugi_document {
 location = / {
     proxy_set_header Host $http_host;
     proxy_pass http://$ryugi_home;
+}
+location = /index.js {
+    proxy_set_header Host $http_host;
+    proxy_pass http://$ryugi_entry;
 }
 location ^~ /_share/ {
     client_max_body_size 2k;
@@ -103,7 +111,7 @@ location @ryugi_document_login {
 }
 ```
 
-HTTPS 上的文档由原生 Hub 直接打开。在内网 HTTP 域名上，浏览器可能缺少查看器使用的 `crypto.randomUUID()`。分享进程会在已登录的文档页面中用浏览器的 `crypto.getRandomValues()` 提供 UUID v4，再从本机安装的 Hub 加载其文档查看器和样式。文档内容、段落定位和 WebSocket 均由原 Hub 处理。
+HTTPS 上的文档由原生 Hub 直接打开。在内网 HTTP 域名上，浏览器可能缺少查看器使用的 `crypto.randomUUID()`。网关会在原版资源库、文档页面和内嵌查看器的公共 JS 入口先加载 HTTP 兼容脚本。它用浏览器的 `crypto.getRandomValues()` 提供 UUID v4，再从本机安装的 Hub 加载其文档查看器和样式。文档内容、段落定位和 WebSocket 均由原 Hub 处理。
 
 ## 从命令行推送
 

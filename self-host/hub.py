@@ -120,6 +120,7 @@ def create_hub(project_dirs, server, namespace=None, *, gateway=None):
         landing = (ASSETS / "gateway.html").read_bytes()
         document_viewer = (ASSETS / "document-viewer.html").read_bytes()
         gateway_assets = {
+            "/http-crypto.js": ("text/javascript", (ASSETS / "http-crypto.js").read_bytes()),
             "/gateway.js": ("text/javascript", (ASSETS / "gateway.js").read_bytes()),
             "/gateway.css": ("text/css", (ASSETS / "gateway.css").read_bytes()),
             "/document-viewer.js": ("text/javascript", (ASSETS / "document-viewer.js").read_bytes()),
@@ -163,6 +164,14 @@ def create_hub(project_dirs, server, namespace=None, *, gateway=None):
         if via_gateway:
             if path == "/" and method in {"GET", "HEAD"}:
                 return respond("200 OK", landing, "text/html")
+            if path == "/index.js" and method in {"GET", "HEAD"}:
+                if not gateway.authorized(env.get("HTTP_COOKIE", "")):
+                    return respond("403 Forbidden", {"error": "请先登录 Hub。"})
+                return respond(
+                    "200 OK",
+                    b'import "/_share/http-crypto.js";\nexport * from "/index.js?hub_native=1";\n',
+                    "text/javascript",
+                )
             document = DOCUMENT_ROUTE.fullmatch(path)
             if document and method in {"GET", "HEAD"}:
                 embedded = bool(document["embed"])

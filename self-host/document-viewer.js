@@ -1,14 +1,5 @@
 "use strict";
 
-// Browsers also provide getRandomValues on ordinary HTTP origins.
-function randomUUID() {
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-  return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join("-");
-}
-
 function nativeResource(value) {
   const url = new URL(value, location.href);
   if (url.protocol !== location.protocol || url.origin !== location.origin || url.username || url.password) {
@@ -26,9 +17,6 @@ function loadResource(element) {
 }
 
 async function openDocument() {
-  if (typeof crypto.randomUUID !== "function") {
-    Object.defineProperty(crypto, "randomUUID", { value: randomUUID, configurable: true, writable: true });
-  }
   // The gateway forwards this request to the installed Hub on the same origin.
   const response = await fetch(location.href, {
     headers: { "X-Ryugi-Native-Document": "1" },

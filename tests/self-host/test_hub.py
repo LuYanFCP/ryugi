@@ -203,6 +203,13 @@ class HubTest(unittest.TestCase):
         embed = "/embed" + path
         self.assertEqual(self.request(embed, host=host, key=False)["status"], 403)
         cookie = "native_session=test-native-key"
+        self.assertEqual(self.request("/index.js", host=host, key=False)["status"], 403)
+        entry = self.request("/index.js", host=host, cookie=cookie)
+        self.assertEqual(entry["status"], 200)
+        self.assertEqual(entry["body"].splitlines(), [
+            b'import "/_share/http-crypto.js";', b'export * from "/index.js?hub_native=1";'
+        ])
+        self.assertEqual(self.response_headers["Cache-Control"], "no-store")
         response = self.request(embed, host=host, cookie=cookie)
         self.assertEqual(response["status"], 200)
         self.assertIn(b"/_share/document-viewer.js", response["body"])

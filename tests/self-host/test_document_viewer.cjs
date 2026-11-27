@@ -5,6 +5,7 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const viewer = fs.readFileSync(path.join(__dirname, "../../self-host/document-viewer.js"), "utf8");
+const shim = fs.readFileSync(path.join(__dirname, "../../self-host/http-crypto.js"), "utf8");
 const location = new URL("http://hub.example.test:7892/document/opaqueID#section");
 const nativeData = { "data-ryugi-artifact-id": "draft", "data-ryugi-project": "example" };
 
@@ -21,6 +22,7 @@ async function openViewer(moduleURL, crypto) {
   };
   const result = new Promise((resolve) => {
     const status = { remove: () => resolve("loaded"), set textContent(error) { resolve(error); } };
+    vm.runInNewContext(shim, { crypto });
     vm.runInNewContext(viewer, {
       crypto, URL, location,
       document: {
