@@ -54,7 +54,9 @@ export RYUGI_SELF_HOST_URL=https://artifacts.example.com
 python3 self-host/push.py --project-dir /path/to/project --artifact html/demo
 ```
 
-这个例子读取 `/path/to/project/.ryugi/artifacts/html/demo/`。要分享设计文档，把定位符换成 `document/spec`。工具会在上传成功后打印完整的分享链接。可以用 `--server URL` 为单次推送指定目标。HTTP 仅用于回环地址上的本机服务或 SSH 隧道。
+这个例子读取项目中的 `html/demo`。Artideck 1.116.0 使用 `.artideck/artifacts/`，旧版使用 `.ryugi/artifacts/`。网页和命令行都能识别这两个目录。要分享设计文档，把定位符换成 `document/spec`。
+
+上传成功后会返回完整分享链接。`--server URL` 可以为单次推送指定上传地址，上传令牌仅通过 HTTPS 或本机回环地址发送。如果接收端与 Hub 在同一机器，且读者通过网关访问，可设置 `RYUGI_SELF_HOST_URL=http://127.0.0.1:8787` 和 `RYUGI_SELF_HOST_PUBLIC_URL=https://artifacts.example.com`。第二个地址用于生成给读者的链接。
 
 网页和命令行使用同一套推送逻辑。重新推送同一个项目和定位符会更新原链接，包括移除本地已经删除的文件。服务端拒绝上传或写入失败时，读者仍能打开先前的完整版本。如果上传后连接中断，可以重试。默认用项目绝对路径的哈希区分项目。团队或 CI 需要从多个检出目录更新同一链接时，从第一次发布起就给 `hub.py` 或 `push.py` 传相同的 `--namespace my-team/my-project`。此选项适用于单个项目。
 

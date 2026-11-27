@@ -59,7 +59,12 @@ def write_snapshot(folder, archive):
         raise ValueError("ZIP upload exceeds 64 MiB")
 
 
-def destination_url(server):
+def artifact_root(project):
+    current = project / ".artideck" / "artifacts"
+    return current if current.is_dir() else project / ".ryugi" / "artifacts"
+
+
+def destination_url(server, *, for_readers=False):
     url = urlsplit(server or "")
     loopback = url.hostname in {"localhost", "127.0.0.1", "::1"}
     if (
@@ -68,8 +73,11 @@ def destination_url(server):
         or url.password is not None
         or url.query
         or url.fragment
-        or not (url.scheme == "https" or (url.scheme == "http" and loopback))
+        or not (url.scheme == "https" or (url.scheme == "http" and (loopback or for_readers)))
+        or "\\" in server
     ):
+        if for_readers:
+            raise ValueError("Set RYUGI_SELF_HOST_PUBLIC_URL to an HTTP(S) base URL")
         raise ValueError("Set --server to an HTTPS base URL (HTTP is available on loopback)")
     return url
 
@@ -87,10 +95,12 @@ def publish(project_dir, artifact, server, namespace=None):
     if not LOCATOR.fullmatch(artifact):
         raise ValueError("Expected an artifact locator such as html/demo or document/spec")
     url = destination_url(server)
+    reader_url = os.environ.get("RYUGI_SELF_HOST_PUBLIC_URL")
+    reader_base = destination_url(reader_url, for_readers=True) if reader_url else url
     token = publishing_token()
     project = project_dir.resolve(strict=True)
-    folder = project / ".ryugi" / "artifacts" / artifact
-    if folder.resolve(strict=True) != folder or not folder.is_dir():
+    folder = artifact_root(project) / artifact
+    if not folder.is_dir() or folder.resolve(strict=True) != folder:
         raise ValueError("The artifact must be a directory inside the project, without symlinks")
     namespace_hash = hashlib.sha256((namespace or str(project)).encode()).hexdigest()
     prefix = url.path.rstrip("/")
@@ -121,14 +131,14 @@ def publish(project_dir, artifact, server, namespace=None):
             path = result.get("path") if isinstance(result, dict) else None
             if not isinstance(path, str) or not re.fullmatch(r"/a/[a-f0-9]{32}/", path):
                 raise ValueError("Server returned an invalid share path")
-            return f"{url.scheme}://{url.netloc}{prefix}{path}"
+            return reader_base.geturl().rstrip("/") + path
         finally:
             client.close()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--artifact", required=True, help="type/slug inside .ryugi/artifacts")
+    parser.add_argument("--artifact", required=True, help="type/slug inside the project's artifacts directory")
     parser.add_argument(
         "--project-dir", type=Path, default=Path.cwd(), help="project root (default: cwd)"
     )

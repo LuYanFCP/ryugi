@@ -112,6 +112,26 @@ class HubTest(unittest.TestCase):
         )
         self.assertNotEqual(self.request("/api/share")["status"], 200)
 
+    def test_migrated_project_keeps_browser_id_and_original_share_path(self):
+        target = {"project": 0, "artifact": "document/spec"}
+        old_url = publish(self.project, target["artifact"], self.server)
+        (self.project / ".ryugi").rename(self.project / ".artideck")
+        inventory = json.loads(self.request("/api/artifacts")["body"])
+        self.assertEqual([item["id"] for item in inventory["items"]], [self.browser_id])
+        with patch.dict(os.environ, RYUGI_SELF_HOST_PUBLIC_URL="http://gateway.example.test/prefix/"):
+            result = self.request("/api/share", "POST", target, origin=ORIGIN)
+        self.assertEqual(result["status"], 200, result["body"])
+        self.assertEqual(
+            json.loads(result["body"])["url"],
+            "http://gateway.example.test/prefix" + old_url.removeprefix(self.server),
+        )
+
+    def test_symlinked_artideck_root_cannot_be_shared(self):
+        (self.project / ".artideck").symlink_to(self.project / ".ryugi", target_is_directory=True)
+        self.assertEqual(json.loads(self.request("/api/artifacts")["body"])["items"], [])
+        with self.assertRaisesRegex(ValueError, "without symlinks"):
+            publish(self.project, "document/spec", self.server)
+
     def test_local_authorization_expires_when_helper_restarts(self):
         self.app, new_key = create_hub([self.project], self.server)
         self.assertNotEqual(self.key, new_key)

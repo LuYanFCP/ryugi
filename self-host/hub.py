@@ -11,7 +11,7 @@ from pathlib import Path
 from socketserver import ThreadingMixIn
 from wsgiref.simple_server import WSGIServer, make_server
 
-from push import destination_url, publish, publishing_token
+from push import artifact_root, destination_url, publish, publishing_token
 from snapshot import ARTIFACT_TYPES, LOCATOR
 
 HOST = "127.0.0.1"
@@ -41,7 +41,7 @@ def artifact_id(folder):
 def list_artifacts(projects):
     items = []
     for index, project in enumerate(projects):
-        root = project / ".ryugi" / "artifacts"
+        root = artifact_root(project)
         if not root.is_dir() or root.resolve() != root:
             continue
         for kind in ARTIFACT_TYPES:
